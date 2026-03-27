@@ -57,6 +57,7 @@ contract Diamond is IDiamondCut {
 
         if (msg.sender != ds.owner) revert Diamond__NotOwner();
         if (facet == address(0)) revert Diamond__ZeroAddress();
+        if (ds.selectorToFacet[selector] != address(0)) revert Diamond__SelectorExists();
 
         ds.selectorToFacet[selector] = facet;
         emit FacetAdded(selector, facet);
@@ -87,6 +88,16 @@ contract Diamond is IDiamondCut {
             case 0 { revert(0, returndatasize()) }
             default { return(0, returndatasize()) }
         }
+    }
+
+    // view function to get facet for a selector (used in tests)
+    function facetAddress(bytes4 selector) external view returns (address) {
+        return LibDiamondStorage.getStorage().selectorToFacet[selector];
+    }
+
+    // view function to get owner (used in tests)
+    function owner() external view returns (address) {
+        return LibDiamondStorage.getStorage().owner;
     }
 
     receive() external payable {}

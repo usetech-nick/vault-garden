@@ -1,4 +1,8 @@
 // LibVaultStorage.sol
+
+//SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
 library LibVaultStorage {
     bytes32 constant STORAGE_SLOT = keccak256("vault.garden.storage");
 
