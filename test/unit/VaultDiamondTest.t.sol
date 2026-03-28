@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {Diamond} from "src/diamond/Diamond.sol";
 import {DiamondFactory} from "src/diamond/DiamondFactory.sol";
+import {ProtocolRegistry} from "src/protocol/ProtocolRegistry.sol";
 import {DepositFacet} from "src/facets/DepositFacet.sol";
 import {WithdrawFacet} from "src/facets/WithdrawFacet.sol";
 import {BalanceFacet} from "src/facets/BalanceFacet.sol";
@@ -12,6 +13,7 @@ import {IDiamondCut as DC} from "src/interfaces/IDiamondCut.sol";
 contract VaultDiamondTest is Test {
     Diamond diamond;
     DiamondFactory factory;
+    ProtocolRegistry registry;
     DepositFacet depositFacet;
     WithdrawFacet withdrawFacet;
     BalanceFacet balanceFacet;
@@ -23,6 +25,7 @@ contract VaultDiamondTest is Test {
         depositFacet = new DepositFacet();
         withdrawFacet = new WithdrawFacet();
         balanceFacet = new BalanceFacet();
+        registry = new ProtocolRegistry();
 
         DC.FacetCut[] memory cuts = new DC.FacetCut[](3);
 
@@ -40,7 +43,7 @@ contract VaultDiamondTest is Test {
         cuts[2] = DC.FacetCut({facetAddress: address(balanceFacet), selectors: balanceSelectors});
 
         factory = new DiamondFactory();
-        address diamondAdd = factory.deployDiamond(owner, cuts);
+        address diamondAdd = factory.deployDiamond(owner, cuts, address(registry));
         diamond = Diamond(payable(diamondAdd));
     }
 
@@ -75,7 +78,7 @@ contract VaultDiamondTest is Test {
         cuts[1] = DC.FacetCut({facetAddress: address(withdrawFacet), selectors: selectors1});
 
         vm.expectRevert(Diamond.Diamond__SelectorExists.selector);
-        new Diamond(owner, cuts);
+        new Diamond(owner, cuts, address(registry));
     }
 
     /////////////////////////////////////
@@ -84,6 +87,8 @@ contract VaultDiamondTest is Test {
     function test_OwnerCanAddFacetAndEmitEvent() public {
         address sampleAddr = address(1);
         bytes4 selector = bytes4(keccak256("sampleFunction(uint256)"));
+
+        registry.whitelist(sampleAddr);
 
         vm.expectEmit(true, true, false, false);
         emit Diamond.FacetAdded(selector, sampleAddr);
@@ -103,55 +108,96 @@ contract VaultDiamondTest is Test {
         diamond.addFacet(selector, sampleAddr);
     }
 
-    // Diamond contract
-    // ├── Constructor
-    // │   ├── owner set correctly
-    // │   ├── all selectors registered correctly
-    // │   ├── duplicate selector reverts with SelectorExists
-    // │   ├── zero address facet reverts with ZeroAddress
-    // │   └── events emitted for each selector
-    // ├── addFacet
-    // │   ├── owner can add new selector
-    // │   ├── selector mapped to correct facet after add
-    // │   ├── emits FacetAdded event
-    // │   ├── non-owner reverts with NotOwner
-    // │   └── zero address facet reverts with ZeroAddress
-    // ├── removeFacet
-    // │   ├── owner can remove selector
-    // │   ├── selector maps to zero address after remove
-    // │   ├── emits FacetRemoved event
-    // │   └── non-owner reverts with NotOwner
-    // ├── transferOwnership
-    // │   ├── owner can transfer to new address
-    // │   ├── new owner can call addFacet
-    // │   ├── old owner cannot call addFacet after transfer
-    // │   ├── zero address reverts
-    // │   └── emits OwnershipTransferred event
-    // ├── fallback routing
-    // │   ├── known selector routes to correct facet
-    // │   ├── unknown selector reverts with FacetNotFound
-    // │   ├── return data passes through correctly
-    // │   └── revert reason passes through correctly
-    // └── receive
-    //     └── accepts plain ETH transfers
+    ////////////////////////////////////////
+    ///// removeFacet Tests ////////////////
+    ////////////////////////////////////////
 
-    /////////// Facet Tests ////////////
-    //     Unit
-    // ├── DepositFacet
-    // │   ├── deposit updates balance correctly
-    // │   ├── deposit updates totalDeposits correctly
-    // │   ├── deposit emits event
-    // │   └── deposit reverts on zero value
-    // ├── WithdrawFacet
-    // │   ├── withdraw updates balance correctly
-    // │   ├── withdraw sends ETH to user
-    // │   ├── withdraw emits event
-    // │   ├── withdraw reverts on zero amount
-    // │   ├── withdraw reverts on insufficient balance
-    // │   └── withdraw reverts on insufficient contract balance
-    // └── BalanceFacet
-    //     ├── getUserBalance returns correct balance
-    //     └── getTotalDeposits returns correct total
+    function test_OwnerCanRemoveFacetAndEmitEvent() public {
+        bytes4 selector = DepositFacet.deposit.selector;
+
+        vm.expectEmit(true, true, false, false);
+        emit Diamond.FacetRemoved(selector);
+
+        vm.prank(owner);
+        diamond.removeFacet(selector);
+
+        assertEq(diamond.facetAddress(selector), address(0));
+    }
+
+    function test_NonOwnerCannotRemoveFacet() public {
+        bytes4 selector = DepositFacet.deposit.selector;
+
+        vm.prank(attacker);
+        vm.expectRevert(Diamond.Diamond__NotOwner.selector);
+        diamond.removeFacet(selector);
+    }
+
+    function test_RemovedSelectorReverts() public {
+        bytes4 selector = DepositFacet.deposit.selector;
+
+        vm.prank(owner);
+        diamond.removeFacet(selector);
+
+        vm.expectRevert(Diamond.Diamond__FacetNotFound.selector);
+        (bool success,) = address(diamond).call(abi.encodeWithSelector(selector));
+        assert(success);
+    }
+
+    ////////////////////////////////////////
+    ///// Fallback Tests ///////////////////
+    ////////////////////////////////////////
+
+    function test_fallbackRoutesDepositCorrectly() public {
+        uint256 depositAmount = 1 ether;
+        vm.deal(user, depositAmount);
+
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount}();
+
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user), depositAmount);
+    }
+
+    function test_fallbackPassesThroughRevert() public {
+        vm.prank(user);
+        vm.expectRevert(WithdrawFacet.WithdrawFacet__InsufficientBalance.selector);
+        WithdrawFacet(address(diamond)).withdraw(1 ether);
+    }
+
+    /////////// Full Flow Tests ////////////
+    function test_DepositThenWithdraw() public {
+        uint256 depositAmount = 1 ether;
+        vm.deal(user, depositAmount);
+
+        // Deposit
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount}();
+
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user), depositAmount);
+
+        // Withdraw
+        vm.prank(user);
+        WithdrawFacet(address(diamond)).withdraw(depositAmount);
+
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user), 0);
+    }
+
+    function test_MultipleUsersBalancesIsolated() public {
+        uint256 depositAmount1 = 1 ether;
+        uint256 depositAmount2 = 2 ether;
+        address user2 = makeAddr("user2");
+
+        vm.deal(user, depositAmount1);
+        vm.deal(user2, depositAmount2);
+
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount1}();
+
+        vm.prank(user2);
+        DepositFacet(address(diamond)).deposit{value: depositAmount2}();
+
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user), depositAmount1);
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user2), depositAmount2);
+    }
 
     // Integration
     // ├── Diamond deployment

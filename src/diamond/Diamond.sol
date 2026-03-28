@@ -3,12 +3,14 @@ pragma solidity ^0.8.30;
 
 import {LibDiamondStorage} from "../libraries/LibDiamondStorage.sol";
 import {IDiamondCut} from "../interfaces/IDiamondCut.sol";
+import {IProtocolRegistry} from "../interfaces/IProtocolRegistry.sol";
 
 contract Diamond is IDiamondCut {
     error Diamond__NotOwner();
     error Diamond__FacetNotFound();
     error Diamond__ZeroAddress();
     error Diamond__SelectorExists();
+    error Diamond__FacetNotWhitelisted();
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event FacetAdded(bytes4 indexed selector, address indexed facet);
@@ -17,10 +19,11 @@ contract Diamond is IDiamondCut {
     // Deployment time:
     //   Factory → new Diamond(owner, cuts) → constructor registers facets internally
     //                                         no msg.sender check needed
-    constructor(address _owner, FacetCut[] memory facetCuts) {
+    constructor(address _owner, FacetCut[] memory facetCuts, address _registry) {
         LibDiamondStorage.DiamondStorage storage ds = LibDiamondStorage.getStorage();
 
         ds.owner = _owner;
+        ds.registry = _registry;
 
         for (uint256 i = 0; i < facetCuts.length; i++) {
             FacetCut memory facetCut = facetCuts[i];
@@ -58,6 +61,7 @@ contract Diamond is IDiamondCut {
         if (msg.sender != ds.owner) revert Diamond__NotOwner();
         if (facet == address(0)) revert Diamond__ZeroAddress();
         if (ds.selectorToFacet[selector] != address(0)) revert Diamond__SelectorExists();
+        if (!IProtocolRegistry(ds.registry).isWhitelisted(facet)) revert Diamond__FacetNotWhitelisted();
 
         ds.selectorToFacet[selector] = facet;
         emit FacetAdded(selector, facet);

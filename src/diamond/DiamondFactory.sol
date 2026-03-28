@@ -9,10 +9,10 @@ contract DiamondFactory is IDiamondCut {
 
     event DiamondDeployed(address indexed owner, address indexed diamond);
 
-    function deployDiamond(address owner, FacetCut[] memory facetCuts) external returns (address) {
+    function deployDiamond(address owner, FacetCut[] memory facetCuts, address _registry) external returns (address) {
         if (owner == address(0)) revert DiamondFactory__ZeroAddress();
 
-        Diamond diamond = new Diamond(owner, facetCuts);
+        Diamond diamond = new Diamond(owner, facetCuts, _registry);
 
         emit DiamondDeployed(owner, address(diamond));
         return address(diamond);

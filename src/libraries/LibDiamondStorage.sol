@@ -7,6 +7,7 @@ library LibDiamondStorage {
     struct DiamondStorage {
         mapping(bytes4 => address) selectorToFacet;
         address owner;
+        address registry;
     }
 
     function getStorage() internal pure returns (DiamondStorage storage ds) {
