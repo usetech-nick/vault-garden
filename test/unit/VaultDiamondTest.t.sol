@@ -163,7 +163,10 @@ contract VaultDiamondTest is Test {
         WithdrawFacet(address(diamond)).withdraw(1 ether);
     }
 
-    /////////// Full Flow Tests ////////////
+    //////////////////////////////////////////
+    /////////// Integration Tests ////////////
+    //////////////////////////////////////////
+
     function test_DepositThenWithdraw() public {
         uint256 depositAmount = 1 ether;
         vm.deal(user, depositAmount);
@@ -199,6 +202,67 @@ contract VaultDiamondTest is Test {
         assertEq(BalanceFacet(address(diamond)).getUserBalance(user2), depositAmount2);
     }
 
+    //////////////////////////////////////////
+    /////////// Fuzz Tests ////////////
+    //////////////////////////////////////////
+
+    function testfuzz_DepositAlwaysUpdatesBalance(uint256 depositAmount) public {
+        depositAmount = bound(depositAmount, 1, 1_000_000 ether);
+        vm.deal(user, depositAmount);
+
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount}();
+
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user), depositAmount);
+    }
+
+    function testfuzz_MultipleDepositsAccumulate(uint256 depositAmount1, uint256 depositAmount2) public {
+        depositAmount1 = bound(depositAmount1, 1, 1_000_000 ether);
+        depositAmount2 = bound(depositAmount2, 1, 1_000_000 ether);
+        vm.deal(user, depositAmount1 + depositAmount2);
+
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount1}();
+
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount2}();
+
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user), depositAmount1 + depositAmount2);
+    }
+
+    function testfuzz_CannotWithdrawMoreThanBalance(uint256 depositAmount, uint256 withdrawAmount) public {
+        depositAmount = bound(depositAmount, 1, 1_000_000 ether);
+        vm.deal(user, depositAmount);
+
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount}();
+
+        // bound AFTER deposit so we know the actual balance
+        withdrawAmount = bound(withdrawAmount, depositAmount + 1, type(uint256).max);
+
+        vm.prank(user);
+        vm.expectRevert(WithdrawFacet.WithdrawFacet__InsufficientBalance.selector);
+        WithdrawFacet(address(diamond)).withdraw(withdrawAmount);
+    }
+
+    function testfuzz_MultipleUsersBalancesIsolated(address user2, uint256 depositAmount1, uint256 depositAmount2)
+        public
+    {
+        user2 = vm.addr((uint160(user2) % 1000 + 1)); // Limit to 1000 unique addresses
+        depositAmount1 = bound(depositAmount1, 1, 1_000_000 ether);
+        depositAmount2 = bound(depositAmount2, 1, 1_000_000 ether);
+        vm.deal(user, depositAmount1);
+        vm.deal(user2, depositAmount2);
+
+        vm.prank(user);
+        DepositFacet(address(diamond)).deposit{value: depositAmount1}();
+
+        vm.prank(user2);
+        DepositFacet(address(diamond)).deposit{value: depositAmount2}();
+
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user), depositAmount1);
+        assertEq(BalanceFacet(address(diamond)).getUserBalance(user2), depositAmount2);
+    }
     // Integration
     // ├── Diamond deployment
     // │   ├── factory deploys diamond with correct owner
